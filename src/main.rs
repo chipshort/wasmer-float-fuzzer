@@ -1,10 +1,12 @@
 use anyhow::bail;
+use float::{Class, Classifier};
 use instructions::float_instructions;
 use rand_chacha::rand_core::{RngCore, SeedableRng};
 use std::env;
 use types::*;
 use wasmer::{imports, Cranelift, Instance, Module, Store, Value};
 
+mod float;
 mod instructions;
 mod types;
 
@@ -30,11 +32,10 @@ fn main() -> anyhow::Result<()> {
     let module = Module::new(&store, &create_wat_module(instrs.as_slice()))?;
     let instance = Instance::new(&mut store, &module, &import_object)?;
 
-    println!("Instruction,Param1,Param1(as bits),Param2,Param2(as bits),Result,Result(as bits)");
+    println!("Instruction,Param1,Param1(as bits),Param1 Class,Param2,Param2(as bits),Param2 Class,Result,Result(as bits),Result Class");
     for (op, params, _) in instrs {
         run_iterations(&instance, &mut store, op, &params, &mut rng, num_iterations)?;
     }
-    // TODO: also run instructions for specific combinations (subnormals, NaNs, infinities, etc.)
 
     Ok(())
 }
@@ -87,7 +88,7 @@ fn run_iterations(
         let op = instance.exports.get_function(instr)?;
 
         let params: Vec<_> = inputs.iter().map(|input| input.random_value(rng)).collect();
-        let (result, result_bits) = op
+        let (result, result_bits, result_class) = op
             .call(store, &params)
             .map(|res| format_value(&res[0]))
             .map_err(|_| ())
@@ -96,8 +97,8 @@ fn run_iterations(
         let mut param_strs = params
             .into_iter()
             .map(|v| {
-                let (v, b) = format_value(&v);
-                format!("{},{}", v, b)
+                let (v, b, c) = format_value(&v);
+                format!("{},{},{:?}", v, b, c)
             })
             .collect::<Vec<_>>();
         // assuming at most 2 parameters for table layout (can be changed later)
@@ -107,35 +108,35 @@ fn run_iterations(
         param_strs.resize(2, ",".to_string());
         let param_strs = param_strs.join(",");
 
-        println!("{instr},{param_strs},{result:?},{result_bits:?}");
+        println!("{instr},{param_strs},{result:?},{result_bits:?},{result_class:?}");
     }
     Ok(())
 }
 
-fn format_value(value: &Value) -> (String, String) {
+fn format_value(value: &Value) -> (String, String, Class) {
     match value {
-        wasmer::Value::I32(v) => (v.to_string(), (*v as u32).to_string()),
-        wasmer::Value::I64(v) => (v.to_string(), (*v as u32).to_string()),
-        wasmer::Value::F32(v) => (v.to_string(), v.to_bits().to_string()),
-        wasmer::Value::F64(v) => (v.to_string(), v.to_bits().to_string()),
+        wasmer::Value::I32(v) => (
+            v.to_string(),
+            (*v as u32).to_string(),
+            (*v as u32).classify(),
+        ),
+        wasmer::Value::I64(v) => (
+            v.to_string(),
+            (*v as u64).to_string(),
+            (*v as u64).classify(),
+        ),
+        wasmer::Value::F32(v) => (
+            v.to_string(),
+            v.to_bits().to_string(),
+            v.to_bits().classify(),
+        ),
+        wasmer::Value::F64(v) => (
+            v.to_string(),
+            v.to_bits().to_string(),
+            v.to_bits().classify(),
+        ),
         wasmer::Value::ExternRef(_) => unimplemented!("ExternRef not supported"),
         wasmer::Value::FuncRef(_) => unimplemented!("FuncRef not supported"),
         wasmer::Value::V128(_) => unimplemented!("V128 not supported"),
-    }
-}
-
-trait Transposable {
-    type Transposed;
-    fn transpose(self) -> Self::Transposed;
-}
-
-impl<A, B, E: Clone> Transposable for Result<(A, B), E> {
-    type Transposed = (Result<A, E>, Result<B, E>);
-
-    fn transpose(self) -> Self::Transposed {
-        match self {
-            Ok((a, b)) => (Ok(a), Ok(b)),
-            Err(e) => (Err(e.clone()), Err(e)),
-        }
     }
 }
