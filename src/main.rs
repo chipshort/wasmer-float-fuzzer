@@ -4,7 +4,7 @@ use instructions::float_instructions;
 use rand_chacha::rand_core::{RngCore, SeedableRng};
 use std::env;
 use types::*;
-use wasmer::{imports, Cranelift, Instance, Module, Store, Value};
+use wasmer::{imports, Cranelift, Instance, Module, Singlepass, Store, Value};
 
 mod float;
 mod instructions;
@@ -13,11 +13,19 @@ mod types;
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = env::args().collect();
 
-    if args.len() != 2 {
-        bail!("Usage: wasmer-float-fuzzer <num_iterations>");
+    if args.len() != 3 {
+        bail!("Usage: wasmer-float-fuzzer <singlepass|cranelift> <num_iterations>");
     }
 
-    let num_iterations: u64 = match args[1].parse() {
+    let is_singlepass = match args[1].as_str() {
+        "singlepass" => true,
+        "cranelift" => false,
+        _ => bail!(
+            "Error: invalid backend specified. Only singlepass and cranelift are valid options"
+        ),
+    };
+
+    let num_iterations: u64 = match args[2].parse() {
         Ok(n) => n,
         Err(_) => bail!("Error: invalid number of iterations"),
     };
@@ -26,10 +34,11 @@ fn main() -> anyhow::Result<()> {
     let mut rng = rand_chacha::ChaChaRng::seed_from_u64(123456);
 
     let instrs = float_instructions();
+
     // setup module
-    let mut store = store();
+    let mut store = store(is_singlepass);
     let import_object = imports! {};
-    let module = Module::new(&store, &create_wat_module(instrs.as_slice()))?;
+    let module = Module::new(&store, create_wat_module(instrs.as_slice()))?;
     let instance = Instance::new(&mut store, &module, &import_object)?;
 
     println!("Instruction,Param1,Param1(as bits),Param1 Class,Param2,Param2(as bits),Param2 Class,Result,Result(as bits),Result Class");
@@ -40,23 +49,28 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn store() -> Store {
+fn store(singlepass: bool) -> Store {
     // TODO: also test Singlepass? Somehow it does not work on my M1 Macbook
-    let mut config = Cranelift::default();
-    config.canonicalize_nans(true);
-    // Store::new(config)
-    Store::default()
+    if singlepass {
+        let mut config = Singlepass::default();
+        config.canonicalize_nans(true);
+        Store::new(config)
+    } else {
+        let mut config = Cranelift::default();
+        config.canonicalize_nans(true);
+        Store::new(config)
+    }
 }
 
 /// Creates a wat module containing one exported function per instruction given
-fn create_wat_module(instrs: &[(&str, Vec<Type>, Type)]) -> String {
+fn create_wat_module(instrs: &[(&str, Vec<Type>, Type)]) -> Vec<u8> {
     let mut module = "(module ".to_string();
     for (op, params, ret) in instrs {
         module.push_str(&create_wat_fn(op, params, *ret));
     }
     module.push(')');
 
-    module
+    wasmer::wat2wasm(module.as_bytes()).unwrap().into_owned()
 }
 
 /// Returns the WAT for an exported function that just calls the given operation
