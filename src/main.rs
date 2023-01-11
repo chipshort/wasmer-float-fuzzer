@@ -43,7 +43,7 @@ fn main() -> anyhow::Result<()> {
 fn store() -> Store {
     // TODO: also test Singlepass? Somehow it does not work on my M1 Macbook
     let mut config = Cranelift::default();
-    config.canonicalize_nans(true);
+    config.canonicalize_nans(false);
     // Store::new(config)
     Store::default()
 }
