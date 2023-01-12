@@ -50,7 +50,6 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn store(singlepass: bool) -> Store {
-    // TODO: also test Singlepass? Somehow it does not work on my M1 Macbook
     if singlepass {
         let mut config = Singlepass::default();
         config.canonicalize_nans(true);
