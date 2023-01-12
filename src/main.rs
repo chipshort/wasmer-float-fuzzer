@@ -105,7 +105,7 @@ fn run_iterations(
         let (result, result_bits, result_class) = op
             .call(store, &params)
             .map(|res| format_value(&res[0]))
-            .map_err(|_| ())
+            .map_err(|rte| rte.to_trap())
             .transpose();
 
         let mut param_strs = params
